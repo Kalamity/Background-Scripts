@@ -30,23 +30,51 @@ return
 
 ^\::
 device := VA_GetDevice("playback")
-playBackDeviceName := VA_GetDeviceName(device)
-ObjRelease(device)
-SetDefaultEndpoint(GetDeviceID(getDevices(), playBackDeviceName = "Headphones (Arctis Pro Wireless Game)" ? "Realtek Digital Output (Realtek(R) Audio)" : "Headphones (Arctis Pro Wireless Game)"))
+playBackDeviceName := VA_GetDeviceName(device), ObjRelease(device)
+; Modified VA_SetDefaultEndpoint so default role is for both 0 - default device, & 2 - default communication device 
+
+; if (playBackDeviceName = "Realtek Digital Output (Realtek(R) Audio)") ; optical out to DAC
+if (playBackDeviceName = "Speakers (SMSL M6)") ; USB DAC
+{
+    VA_SetDefaultEndpoint("Headphones (Arctis Pro Wireless Game)")
+    VA_SetDefaultEndpoint("Headset Microphone (Arctis Pro Wireless Chat)")
+}
+else 
+{
+    ;VA_SetDefaultEndpoint("Realtek Digital Output (Realtek(R) Audio)")
+    VA_SetDefaultEndpoint("Speakers (SMSL M6)")
+    VA_SetDefaultEndpoint("Microphone (Realtek(R) Audio)")
+}
+
 soundplay *-1
 return 
 
+!\::
+device := VA_GetDevice("capture")
+captureDeviceName := VA_GetDeviceName(device), ObjRelease(device)
+VA_SetDefaultEndpoint(captureDeviceName = "Microphone (Realtek(R) Audio)" ? "Headset Microphone (Arctis Pro Wireless Chat)" : "Microphone (Realtek(R) Audio)")
+return 
+
+
+
+
 ;f1::
-devices := getDevices()
-s := ""
-For deviceName, deviceID in devices
-    s .= DeviceName "`n"
-msgbox % clipboard := RTrim(s, "`n")
+s := "Active Devices"
+    . "`n`nOutput:`n" VA_ListDevices(0) 
+    . "`n`nInput:`n" VA_ListDevices(1)
+msgbox % clipboard := s 
 return 
 
 /*
+Active Devices
+
+Output:
 Headphones (Arctis Pro Wireless Game)
-Realtek Digital Output (Realtek(R) Audio)
+Speakers (SMSL M6)
+
+Input:
+Microphone (Realtek(R) Audio)
+Headset Microphone (Arctis Pro Wireless Chat)
 */
 
 
@@ -136,12 +164,41 @@ WM_QUERYENDSESSION(wParam, lParam)
 
 
 
+; deviceType (flow):    eRender = 0 (output), 0x1 eCapture (input), 0x2 eAll 
+; deviceState:          DEVICE_STATE_ACTIVE := 0x1, DEVICE_STATE_DISABLED := 0x2, DEVICE_STATE_NOTPRESENT := 0x4,
+;                       DEVICE_STATE_UNPLUGGED := 0x8, DEVICE_STATEMASK_ALL := 0xf
+
+VA_ListDevices(deviceType := 2, deviceState := 0x1,  delimiter := "`n")
+{
+    static CLSID_MMDeviceEnumerator := "{BCDE0395-E52F-467C-8E3D-C4579291692E}"
+        , IID_IMMDeviceEnumerator := "{A95664D2-9614-4F35-A746-DE8DB63617E6}"
+    if !(deviceEnumerator := ComObjCreate(CLSID_MMDeviceEnumerator, IID_IMMDeviceEnumerator))
+        return ""
+
+    VA_IMMDeviceEnumerator_EnumAudioEndpoints(deviceEnumerator, deviceType, deviceState, devices)
+    VA_IMMDeviceCollection_GetCount(devices, count)
+    Loop % count
+    {
+        if VA_IMMDeviceCollection_Item(devices, A_Index-1, device) = 0
+        {
+            deviceStr .= (deviceStr ? delimiter : "") VA_GetDeviceName(device) 
+            ObjRelease(device) 
+        }
+    }
+    ObjRelease(deviceEnumerator)
+    if devices
+        ObjRelease(devices)
+    
+    return deviceStr    
+}
+
 
 
 SetDefaultEndpoint(DeviceID)
 {
     IPolicyConfig := ComObjCreate("{870af99c-171d-4f9e-af0d-e63df40c2bc9}", "{F8679F50-850A-41CF-9C72-430F290290C8}")
-    DllCall(NumGet(NumGet(IPolicyConfig+0)+13*A_PtrSize), "UPtr", IPolicyConfig, "UPtr", &DeviceID, "UInt", 0, "UInt")
+    DllCall(NumGet(NumGet(IPolicyConfig+0)+13*A_PtrSize), "UPtr", IPolicyConfig, "UPtr", &DeviceID, "UInt", 0, "UInt") ; default communication device
+    DllCall(NumGet(NumGet(IPolicyConfig+0)+13*A_PtrSize), "UPtr", IPolicyConfig, "UPtr", &DeviceID, "UInt", 2, "UInt") ; default device  
     ObjRelease(IPolicyConfig)
 }
 
@@ -612,7 +669,7 @@ VA_GetDeviceName(device)
     return deviceName
 }
 
-VA_SetDefaultEndpoint(device_desc, role)
+VA_SetDefaultEndpoint(device_desc, role := "")
 {
     /* Roles:
          eConsole        = 0  ; Default Device
@@ -625,7 +682,11 @@ VA_SetDefaultEndpoint(device_desc, role)
     {
         cfg := ComObjCreate("{294935CE-F637-4E7C-A41B-AB255460B862}"
                           , "{568b9108-44bf-40b4-9006-86afe5b5a620}")
-        hr := VA_xIPolicyConfigVista_SetDefaultEndpoint(cfg, id, role)
+        if (role != "")
+            hr := VA_xIPolicyConfigVista_SetDefaultEndpoint(cfg, id, role)
+        else 
+            hr := VA_xIPolicyConfigVista_SetDefaultEndpoint(cfg, id, 0) | VA_xIPolicyConfigVista_SetDefaultEndpoint(cfg, id, 2)
+
         ObjRelease(cfg)
     }
     ObjRelease(device)
